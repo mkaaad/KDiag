@@ -34,6 +34,12 @@ type Config struct {
 	// GiteaConfig is the configuration for the Gitea client, including
 	// the server URL and authentication token.
 	GiteaConfig GiteaConfig
+	// JaegerAddress is the base URL of the Jaeger query service (e.g.,
+	// "http://localhost:16686"). If empty, Jaeger tools are not registered.
+	JaegerAddress string
+	// LokiAddress is the base URL of the Loki query frontend (e.g.,
+	// "http://localhost:3100"). If empty, Loki tools are not registered.
+	LokiAddress string
 }
 
 // GiteaConfig holds the connection details for the Gitea API client.

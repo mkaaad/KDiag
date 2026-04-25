@@ -5,6 +5,7 @@ package client
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"code.gitea.io/sdk/gitea"
@@ -53,6 +54,50 @@ func NewGiteaClient(c *config.Config) error {
 		return err
 	}
 	tools := tool.NewGiteaQueryTool(client)
+	c.Tools = append(c.Tools, tools...)
+	return nil
+}
+
+// NewJaegerClient creates a Jaeger query API client for the given address and
+// registers the Jaeger query tools with the config. If JaegerAddress is empty,
+// it skips registration and returns nil. Returns an error if the address is
+// unreachable.
+func NewJaegerClient(c *config.Config) error {
+	if c.JaegerAddress == "" {
+		return nil
+	}
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	jaegerClient := tool.NewJaegerClient(httpClient, c.JaegerAddress)
+	// Validate connectivity by fetching services list.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := jaegerClient.DoGet(ctx, "/api/services", nil)
+	if err != nil {
+		return err
+	}
+	tools := tool.NewJaegerQueryTool(jaegerClient)
+	c.Tools = append(c.Tools, tools...)
+	return nil
+}
+
+// NewLokiClient creates a Loki query API client for the given address and
+// registers the Loki log query tools with the config. If LokiAddress is empty,
+// it skips registration and returns nil. Returns an error if the address is
+// unreachable.
+func NewLokiClient(c *config.Config) error {
+	if c.LokiAddress == "" {
+		return nil
+	}
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	lokiClient := tool.NewLokiClient(httpClient, c.LokiAddress)
+	// Validate connectivity by fetching label names.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := lokiClient.DoGet(ctx, "/loki/api/v1/label", nil)
+	if err != nil {
+		return err
+	}
+	tools := tool.NewLokiQueryTool(lokiClient)
 	c.Tools = append(c.Tools, tools...)
 	return nil
 }
