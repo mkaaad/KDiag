@@ -19,7 +19,7 @@ type Config struct {
 	// agent, false for conversational agent.
 	OpenAIFuncCall bool
 	// Tools is the list of tools registered with the LLM agent (e.g., Prometheus
-	// query tools). Tools are appended by NewHanderFunc and PollAlerts.
+	// query tools). Tools are appended by NewHandlerFunc and PollAlerts.
 	Tools []tools.Tool
 	// Language specifies the preferred language for agent output.
 	Language language.Tag
@@ -31,4 +31,15 @@ type Config struct {
 	PollingInterval time.Duration
 	// MaxIterations limits the number of LLM agent reasoning iterations.
 	MaxIterations int
+	// GiteaConfig is the configuration for the Gitea client, including
+	// the server URL and authentication token.
+	GiteaConfig GiteaConfig
+}
+
+// GiteaConfig holds the connection details for the Gitea API client.
+type GiteaConfig struct {
+	// ServerURL is the base URL of the Gitea server (e.g., "https://gitea.example.com").
+	ServerURL string
+	// Token is the Gitea API authentication token.
+	Token string
 }

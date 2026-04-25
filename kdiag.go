@@ -13,24 +13,25 @@ import (
 	"github.com/mkaaad/kdiag/config"
 	"github.com/mkaaad/kdiag/internal/agent"
 	"github.com/mkaaad/kdiag/internal/client"
-	"github.com/mkaaad/kdiag/internal/tool"
 )
 
-// NewHanderFunc creates a net/http handler that processes Alertmanager webhooks.
+// NewHandlerFunc creates a net/http handler that processes Alertmanager webhooks.
 // It creates a Prometheus API client, registers the metrics query tools with
 // the provided config, and returns an HTTP handler. The handler reads the
 // request body, responds immediately with 200 "ok", and then runs the LLM
 // agent diagnosis asynchronously in a background goroutine.
 // It panics if the Prometheus address is unreachable or the config is invalid.
-func NewHanderFunc(ctx context.Context, c *config.Config) http.HandlerFunc {
+func NewHandlerFunc(ctx context.Context, c *config.Config) http.HandlerFunc {
 	// Create a Prometheus API client and validate the connection.
-	api, err := client.NewClientPrometheus(c.PrometheusAddress)
+	_, err := client.NewPrometheusClient(c)
 	if err != nil {
 		panic(err)
 	}
-	// Register the Prometheus query tools so the LLM agent can query metrics.
-	mt := tool.NewMetricsQueryTool(api)
-	c.Tools = append(c.Tools, mt...)
+	err = client.NewGiteaClient(c)
+	if err != nil {
+		//TODO
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Read the full Alertmanager webhook payload from the request body.
 		raw, err := io.ReadAll(r.Body)
@@ -55,14 +56,14 @@ func NewHanderFunc(ctx context.Context, c *config.Config) http.HandlerFunc {
 // goroutine if non-blocking behavior is desired.
 func PollAlerts(ctx context.Context, c *config.Config) {
 	// Create a Prometheus API client and validate the connection.
-	api, err := client.NewClientPrometheus(c.PrometheusAddress)
+	api, err := client.NewPrometheusClient(c)
 	if err != nil {
 		panic(err)
 	}
-	// Register the Prometheus query tools for the LLM agent.
-	mt := tool.NewMetricsQueryTool(api)
-	c.Tools = append(c.Tools, mt...)
-
+	err = client.NewGiteaClient(c)
+	if err != nil {
+		//TODO
+	}
 	// Set up a ticker with the configured interval, defaulting to 24h.
 	var ticker *time.Ticker
 	defer ticker.Stop()

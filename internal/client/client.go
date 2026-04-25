@@ -7,18 +7,21 @@ import (
 	"context"
 	"time"
 
+	"code.gitea.io/sdk/gitea"
+	"github.com/mkaaad/kdiag/config"
+	"github.com/mkaaad/kdiag/internal/tool"
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 )
 
-// NewClientPrometheus creates a new Prometheus v1 API client for the given
+// NewPrometheusClient creates a new Prometheus v1 API client for the given
 // address and validates the connection by calling the Buildinfo endpoint with
 // a 3-second timeout. Returns the API handle on success, or an error if the
 // address is unreachable or the response is invalid.
-func NewClientPrometheus(address string) (v1.API, error) {
+func NewPrometheusClient(c *config.Config) (v1.API, error) {
 	// Create the underlying HTTP client for the Prometheus API.
 	client, err := api.NewClient(api.Config{
-		Address: address,
+		Address: c.PrometheusAddress,
 	})
 	if err != nil {
 		return nil, err
@@ -32,5 +35,24 @@ func NewClientPrometheus(address string) (v1.API, error) {
 	if err != nil {
 		return nil, err
 	}
-	return v1api, nil
+	tools := tool.NewMetricsQueryTool(v1api)
+	c.Tools = append(c.Tools, tools...)
+	return v1api, err
+}
+// NewGiteaClient creates a new Gitea API client for the given server URL and
+// token, and validates the connection by fetching the authenticated user's info.
+// On success the Gitea query tools are registered with the config. Returns an
+// error if the server is unreachable or credentials are invalid.
+func NewGiteaClient(c *config.Config) error {
+	client, err := gitea.NewClient(c.GiteaConfig.ServerURL, gitea.SetToken(c.GiteaConfig.Token))
+	if err != nil {
+		return err
+	}
+	_, _, err = client.GetMyUserInfo()
+	if err != nil {
+		return err
+	}
+	tools := tool.NewGiteaQueryTool(client)
+	c.Tools = append(c.Tools, tools...)
+	return nil
 }
