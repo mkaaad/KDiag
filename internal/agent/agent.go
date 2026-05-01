@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"github.com/mkaaad/kdiag/config"
+	"github.com/mkaaad/kdiag/internal/correlation"
 	"github.com/mkaaad/kdiag/internal/memory"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
@@ -92,6 +93,11 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 
 	// Inject depth instruction based on severity.
 	msg = depthInstruction(severity) + "\n" + msg
+
+	// Build time-anchored cross-datasource context and inject into message.
+	if corrCtx := correlation.BuildContext(ctx, c, msg); corrCtx != "" {
+		msg = msg + corrCtx
+	}
 
 	// Choose agent type based on configuration.
 	var agent agents.Agent
