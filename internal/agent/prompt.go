@@ -77,6 +77,15 @@ Output strictly in the following Markdown structure:
    - Explanation: ...  
    - Why this could cause the alert: ...
 
+## 🔗 Fault Tree
+` + "```mermaid" + `
+graph TD
+    R[Root Cause] --> C[Direct Cause]
+    C --> S[Symptom]
+    S --> A[Alert Triggered]
+` + "```" + `
+Generate a Mermaid flowchart tracing the root cause chain. Replace placeholders with actual causes from your analysis. Add intermediate nodes as needed.
+
 ## 🛠️ Solutions
 ### Immediate Mitigation (execute now)
 - Action 1: ... (use command: ...)
