@@ -7,6 +7,7 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 
 	"github.com/mkaaad/kdiag/config"
@@ -15,11 +16,71 @@ import (
 	"github.com/tmc/langchaingo/chains"
 )
 
+// severityFromMsg extracts the severity label from an Alertmanager JSON message.
+func severityFromMsg(msg string) string {
+	var raw struct {
+		Labels struct {
+			Severity string `json:"severity"`
+		} `json:"labels"`
+		Alerts []struct {
+			Labels struct {
+				Severity string `json:"severity"`
+			} `json:"labels"`
+		} `json:"alerts"`
+	}
+	if err := json.Unmarshal([]byte(msg), &raw); err != nil {
+		return ""
+	}
+	if raw.Labels.Severity != "" {
+		return raw.Labels.Severity
+	}
+	for _, a := range raw.Alerts {
+		if a.Labels.Severity != "" {
+			return a.Labels.Severity
+		}
+	}
+	return ""
+}
+
+// depthInstruction returns a severity-adaptive instruction prepended to the agent input.
+func depthInstruction(severity string) string {
+	switch severity {
+	case "critical":
+		return "\n[诊断深度: 全面调查] 此告警为 Critical 级别，请进行最彻底的根因分析。使用所有可用工具深入调查，分析每一个可能的原因，并提供详细的修复步骤。\n"
+	case "warning":
+		return "\n[诊断深度: 标准调查] 此告警为 Warning 级别，请进行标准深度的分析。聚焦最可能的原因，提供清晰的解决步骤。\n"
+	case "info":
+		return "\n[诊断深度: 快速评估] 此告警为 Info 级别，请进行快速评估。简要分析可能原因即可，无需深入调查。\n"
+	default:
+		return "\n[诊断深度: 标准调查] 请按默认深度进行诊断分析。\n"
+	}
+}
+
+// maxIterForSeverity returns the recommended max agent iterations for a severity level.
+func maxIterForSeverity(severity string, configured int) int {
+	if configured > 0 {
+		return configured
+	}
+	switch severity {
+	case "critical":
+		return 15
+	case "warning":
+		return 10
+	case "info":
+		return 5
+	default:
+		return 10
+	}
+}
+
 // Diag runs the LLM agent to diagnose the given alert message. It creates the
 // appropriate agent type based on config.OpenAIFuncCall, wraps it in an executor
 // with the configured maximum iterations, and runs the agent with the alert
 // message as input. The result is currently discarded pending proper logging.
 func Diag(ctx context.Context, c *config.Config, msg string) string {
+	// Determine alert severity and adapt diagnosis depth.
+	severity := severityFromMsg(msg)
+
 	// Build memory context from the alert and prepend to user message.
 	if c.MemoryStore != nil {
 		if tags := memory.ExtractTags(msg); len(tags) > 0 {
@@ -28,6 +89,9 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 			}
 		}
 	}
+
+	// Inject depth instruction based on severity.
+	msg = depthInstruction(severity) + "\n" + msg
 
 	// Choose agent type based on configuration.
 	var agent agents.Agent
@@ -38,8 +102,9 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 	} else {
 		agent = agents.NewConversationalAgent(c.LLM, c.Tools, agents.WithPromptPrefix(agentPrompt))
 	}
-	// Create an executor with the configured iteration limit.
-	executor := agents.NewExecutor(agent, agents.WithMaxIterations(c.MaxIterations))
+	// Create an executor with the adaptive iteration limit.
+	maxIter := maxIterForSeverity(severity, c.MaxIterations)
+	executor := agents.NewExecutor(agent, agents.WithMaxIterations(maxIter))
 	answer, err := chains.Run(ctx, executor, msg)
 	if err != nil {
 		return ""
