@@ -47,6 +47,7 @@ func NewHandlerFunc(ctx context.Context, c *config.Config) http.HandlerFunc {
 	if err != nil {
 		//TODO
 	}
+	client.NewEmbedder(c)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Read the full Alertmanager webhook payload from the request body.
@@ -96,6 +97,7 @@ func PollAlerts(ctx context.Context, c *config.Config) {
 	if err != nil {
 		//TODO
 	}
+	client.NewEmbedder(c)
 	// Set up a ticker with the configured interval, defaulting to 24h.
 	var ticker *time.Ticker
 	defer ticker.Stop()

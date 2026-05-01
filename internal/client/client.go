@@ -16,6 +16,7 @@ import (
 	"github.com/mkaaad/kdiag/internal/tool"
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	"github.com/tmc/langchaingo/embeddings"
 )
 
 // NewPrometheusClient creates a new Prometheus v1 API client for the given
@@ -120,7 +121,21 @@ func NewPostgresStore(ctx context.Context, c *config.Config) error {
 	return nil
 }
 
-// NewMemoryStore creates a PostgreSQL-backed memory store and registers the
+// NewEmbedder creates a text embedding model from the configured LLM and
+// assigns it to c.Embedder. It type-asserts c.LLM as EmbedderClient; if the
+// LLM does not support embeddings (e.g., a non-OpenAI model), it silently
+// returns without setting the embedder.
+func NewEmbedder(c *config.Config) {
+	client, ok := c.LLM.(embeddings.EmbedderClient)
+	if !ok {
+		return
+	}
+	embedder, err := embeddings.NewEmbedder(client)
+	if err != nil {
+		return
+	}
+	c.Embedder = embedder
+}
 // three memory tools (SearchMemory, ReadMemory, Remember) with the config.
 // If the config's PostgresConfig has an empty Host, it skips initialization
 // and returns nil.

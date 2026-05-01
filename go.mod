@@ -5,6 +5,7 @@ go 1.26
 require (
 	code.gitea.io/sdk/gitea v0.24.1
 	github.com/google/uuid v1.6.0
+	github.com/pgvector/pgvector-go v0.3.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.66.1
 	github.com/tmc/langchaingo v0.1.14

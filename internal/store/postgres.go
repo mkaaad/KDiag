@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pgvector/pgvector-go"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -32,14 +33,15 @@ func (c PostgresConfig) DSN() string {
 
 // diagnosisModel is the GORM model for the diagnoses table.
 type diagnosisModel struct {
-	ID          int64     `gorm:"primaryKey;autoIncrement"`
-	SessionID   string    `gorm:"uniqueIndex;not null;type:text"`
-	AlertName   string    `gorm:"index;not null;default:'';type:text"`
-	Fingerprint string    `gorm:"index;not null;default:'';type:text"`
-	AlertRaw    string    `gorm:"not null;type:text"`
-	Diagnosis   string    `gorm:"not null;default:'';type:text"`
-	CreatedAt   time.Time `gorm:"autoCreateTime"`
-	UpdatedAt   time.Time `gorm:"autoUpdateTime"`
+	ID          int64           `gorm:"primaryKey;autoIncrement"`
+	SessionID   string          `gorm:"uniqueIndex;not null;type:text"`
+	AlertName   string          `gorm:"index;not null;default:'';type:text"`
+	Fingerprint string          `gorm:"index;not null;default:'';type:text"`
+	AlertRaw    string          `gorm:"not null;type:text"`
+	Diagnosis   string          `gorm:"not null;default:'';type:text"`
+	Embedding   pgvector.Vector `gorm:"type:vector(1536)"`
+	CreatedAt   time.Time       `gorm:"autoCreateTime"`
+	UpdatedAt   time.Time       `gorm:"autoUpdateTime"`
 }
 
 // messageModel is the GORM model for the messages table.
@@ -81,12 +83,27 @@ func NewPostgresStore(ctx context.Context, cfg PostgresConfig) (*PostgresStore, 
 }
 
 // migrate runs GORM auto-migration to create/update tables.
+// It also enables the pgvector extension and creates an HNSW index
+// on the embedding column for fast approximate nearest neighbor search.
 func (s *PostgresStore) migrate() error {
-	return s.db.AutoMigrate(&diagnosisModel{}, &messageModel{})
+	// Enable pgvector extension.
+	if err := s.db.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
+		return fmt.Errorf("enable vector extension: %w", err)
+	}
+	if err := s.db.AutoMigrate(&diagnosisModel{}, &messageModel{}); err != nil {
+		return err
+	}
+	// Create HNSW index on the embedding column for cosine distance search.
+	// The index is created IF NOT EXISTS to make migration idempotent.
+	return s.db.Exec(
+		"CREATE INDEX IF NOT EXISTS idx_diagnoses_embedding ON diagnoses USING hnsw (embedding vector_cosine_ops)",
+	).Error
 }
 
 // SaveDiagnosis inserts or updates a diagnosis record using upsert.
-func (s *PostgresStore) SaveDiagnosis(ctx context.Context, sessionID, fingerprint, alertName, alertRaw, diagnosis string) error {
+// If embedding is non-nil, it is stored in the pgvector column for
+// similarity search.
+func (s *PostgresStore) SaveDiagnosis(ctx context.Context, sessionID, fingerprint, alertName, alertRaw, diagnosis string, embedding []float32) error {
 	record := &diagnosisModel{
 		SessionID:   sessionID,
 		Fingerprint: fingerprint,
@@ -94,15 +111,41 @@ func (s *PostgresStore) SaveDiagnosis(ctx context.Context, sessionID, fingerprin
 		AlertRaw:    alertRaw,
 		Diagnosis:   diagnosis,
 	}
+	if embedding != nil {
+		record.Embedding = pgvector.NewVector(embedding)
+	}
 	return s.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "session_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"diagnosis", "updated_at"}),
+			DoUpdates: clause.AssignmentColumns([]string{"diagnosis", "embedding", "updated_at"}),
 		}).
 		Create(record).Error
 }
 
-// SearchByFingerprint finds diagnoses with matching or similar fingerprint prefix.
+// SearchByVector finds diagnoses with similar embedding vectors using
+// cosine distance (<=>). Requires pgvector extension on PostgreSQL.
+// Returns up to limit results ordered by similarity ascending.
+func (s *PostgresStore) SearchByVector(ctx context.Context, embedding []float32, limit int) ([]Diagnosis, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	if len(embedding) == 0 {
+		return nil, nil
+	}
+	vec := pgvector.NewVector(embedding)
+	var models []diagnosisModel
+	err := s.db.WithContext(ctx).
+		Raw("SELECT *, embedding <=> ? AS distance FROM diagnoses ORDER BY embedding <=> ? LIMIT ?", vec, vec, limit).
+		Scan(&models).Error
+	if err != nil {
+		return nil, err
+	}
+	results := make([]Diagnosis, len(models))
+	for i, m := range models {
+		results[i] = *modelToDiagnosis(&m)
+	}
+	return results, nil
+}
 func (s *PostgresStore) SearchByFingerprint(ctx context.Context, fingerprint string, limit int) ([]Diagnosis, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 10

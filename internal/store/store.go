@@ -17,6 +17,7 @@ type Diagnosis struct {
 	Diagnosis   string    `json:"diagnosis"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	Distance    float64   `json:"distance,omitempty"` // cosine distance from vector search, 0 otherwise
 }
 
 // Message represents a single message in a diagnosis session.
@@ -31,7 +32,9 @@ type Message struct {
 // Store defines the interface for persisting diagnosis data.
 type Store interface {
 	// SaveDiagnosis stores or updates a diagnosis result for a session.
-	SaveDiagnosis(ctx context.Context, sessionID, fingerprint, alertName, alertRaw, diagnosis string) error
+	// If embedding is non-nil, it is stored in a pgvector column for
+	// similarity search.
+	SaveDiagnosis(ctx context.Context, sessionID, fingerprint, alertName, alertRaw, diagnosis string, embedding []float32) error
 
 	// GetDiagnosis retrieves a diagnosis by session ID.
 	GetDiagnosis(ctx context.Context, sessionID string) (*Diagnosis, error)
@@ -47,6 +50,11 @@ type Store interface {
 
 	// SearchByFingerprint finds diagnoses with a similar fingerprint prefix.
 	SearchByFingerprint(ctx context.Context, fingerprint string, limit int) ([]Diagnosis, error)
+
+	// SearchByVector finds diagnoses with similar embedding vectors using
+	// cosine distance (<=>). Requires pgvector extension on PostgreSQL.
+	// Returns up to limit results ordered by similarity ascending.
+	SearchByVector(ctx context.Context, embedding []float32, limit int) ([]Diagnosis, error)
 
 	// Close cleans up store resources (e.g., closes the database connection).
 	Close() error

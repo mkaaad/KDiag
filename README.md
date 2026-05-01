@@ -33,6 +33,7 @@ KDiag 是一个 Go 库，接收 Prometheus Alertmanager 的告警通知，利用
 | **Memory** | 3 | 历史情报搜索、详情阅读、新知存储（8 类预设分类） |
 | **Correlation** | — | 时空关联引擎：告警时间锚定 Prometheus 范围查询、Jaeger 错误 Trace、Loki 错误日志 |
 | **Fingerprint** | — | 告警指纹聚类：SHA256 标签哈希 + 相似案例检索（PostgreSQL LIKE 前缀匹配） |
+| **pgvector** | — | 语义向量检索：诊断结果自动转为 embedding，余弦距离搜索相似历史（HNSW 索引） |
 
 - **HTTP Webhook 接入** — 提供 `net/http` Handler，接收 Alertmanager 告警推送
 - **定时轮询** — 支持按配置间隔轮询 Prometheus 当前告警
@@ -44,6 +45,7 @@ KDiag 是一个 Go 库，接收 Prometheus Alertmanager 的告警通知，利用
 - **故障树自动生成** — 诊断报告中自动包含 Mermaid 流程图，可视化根因链条
 - **时空关联引擎** — 告警触发前后自动拉取 Prometheus 指标趋势、Jaeger 错误链路、Loki 错误日志，注入 Agent 上下文
 - **告警指纹聚类** — 基于 SHA256 标签哈希自动聚类同类告警，注入相似历史案例加速根因定位
+- **语义向量检索** — 诊断结果自动通过 LLM 转为 embedding 存入 pgvector，跨告警名语义搜索相似根因
 
 ## 项目亮点 / Highlights
 
@@ -69,6 +71,7 @@ KDiag 是一个 Go 库，接收 Prometheus Alertmanager 的告警通知，利用
 - **故障树自动生成** — Agent 输出中包含 Mermaid 流程图，从根因→中间因→直接因→症状→告警触发，可视化根因传播链条
 - **时空关联引擎** — 告警触发时间锚定窗口（前30分钟→后15分钟），自动并行查询 Prometheus 5维指标、Jaeger 错误 Trace、Loki 错误日志，注入 Agent 上下文
 - **告警指纹聚类** — 基于告警标签的 SHA256 哈希实现指纹计算，诊断前自动检索相似历史案例并注入 Agent，减少重复分析
+- **语义向量检索** — 诊断结果自动通过 LLM 转为 embedding 存入 pgvector（HNSW 索引），量前模糊搜索语义相似的历史诊断，跨告警名发现根因关联
 
 ### 🎯 落地场景 / Use Cases
 
@@ -125,8 +128,8 @@ internal/
     store.go          # PostgresStore 实现（GORM + PostgreSQL）
     tools.go          # SearchMemory / ReadMemory / Remember + 标签提取 / 上下文注入
   store/
-    store.go          # 诊断存储接口（SaveDiagnosis / SearchByFingerprint 等）
-    postgres.go       # PostgresStore 实现
+    store.go          # 诊断存储接口（SaveDiagnosis / SearchByFingerprint / SearchByVector 等）
+    postgres.go       # PostgresStore 实现（含 pgvector 向量列 + HNSW 索引）
     fingerprint.go    # 告警指纹计算（SHA256 标签哈希）+ AlertName 提取
   tool/
     metrics.go        # 4 个 Prometheus 查询工具
@@ -167,6 +170,7 @@ KDiag is a Go library that receives Prometheus Alertmanager webhook notification
   | **Memory** | 3 | Historical intelligence search, detail read, knowledge persist (8 categories) |
   | **Correlation** | — | Time-anchored cross-datasource engine: Prometheus range queries, Jaeger error traces, Loki error logs |
   | **Fingerprint** | — | SHA256 label hash clustering + similar case retrieval via PostgreSQL LIKE prefix match |
+| **pgvector** | — | Semantic vector search: diagnosis embeddings via LLM, cosine distance with HNSW index |
 
 - **Two Agent Modes** — OpenAI Function Calling Agent or Conversational Agent
 - **Customizable System Prompt** — Built-in SRE alert analysis workflow prompt that outputs structured Markdown reports
@@ -176,6 +180,7 @@ KDiag is a Go library that receives Prometheus Alertmanager webhook notification
 - **Fault Tree Generation** — Mermaid flowchart in every diagnosis output visualizing the root cause chain
 - **Correlation Engine** — Pre-fetches Prometheus metrics, Jaeger error traces, Loki error logs around alert time window
 - **Alert Fingerprint Clustering** — SHA256-based label hashing + automatic similar case retrieval before each diagnosis
+- **Semantic Vector Search** — Diagnosis output embedded via LLM into pgvector, cross-alert semantic similarity retrieval with HNSW index
 
 ### Quick Start
 
@@ -226,8 +231,8 @@ internal/
     store.go          # PostgresStore (GORM + PostgreSQL)
     tools.go          # SearchMemory / ReadMemory / Remember + label extraction / context injection
   store/
-    store.go          # Diagnosis store interface (SaveDiagnosis / SearchByFingerprint, etc.)
-    postgres.go       # PostgresStore implementation
+    store.go          # Diagnosis store interface (SaveDiagnosis / SearchByFingerprint / SearchByVector, etc.)
+    postgres.go       # PostgresStore with pgvector column + HNSW index
     fingerprint.go    # Alert fingerprint (SHA256 label hash) + AlertName extraction
   tool/
     metrics.go        # 4 Prometheus query tools

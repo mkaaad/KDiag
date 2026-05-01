@@ -8,6 +8,7 @@ import (
 
 	"github.com/mkaaad/kdiag/internal/memory"
 	"github.com/mkaaad/kdiag/internal/store"
+	"github.com/tmc/langchaingo/embeddings"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/tools"
 	"golang.org/x/text/language"
@@ -51,6 +52,10 @@ type Config struct {
 	// MemoryStore is the autonomous memory backend for environment intelligence.
 	// If nil, memory tools and context injection are disabled.
 	MemoryStore memory.Store
+	// Embedder is the text embedding model used for vector similarity search on
+	// diagnosis records. If nil, vector-based similar case retrieval is disabled
+	// and only fingerprint-based exact matching will be used.
+	Embedder embeddings.Embedder
 }
 
 // GiteaConfig holds the connection details for the Gitea API client.
