@@ -170,7 +170,7 @@ KDiag is a Go library that receives Prometheus Alertmanager webhook notification
   | **Memory** | 3 | Historical intelligence search, detail read, knowledge persist (8 categories) |
   | **Correlation** | — | Time-anchored cross-datasource engine: Prometheus range queries, Jaeger error traces, Loki error logs |
   | **Fingerprint** | — | SHA256 label hash clustering + similar case retrieval via PostgreSQL LIKE prefix match |
-| **pgvector** | — | Semantic vector search: diagnosis embeddings via LLM, cosine distance with HNSW index |
+  | **pgvector** | — | Semantic vector search: diagnosis embeddings via LLM, cosine distance with HNSW index |
 
 - **Two Agent Modes** — OpenAI Function Calling Agent or Conversational Agent
 - **Customizable System Prompt** — Built-in SRE alert analysis workflow prompt that outputs structured Markdown reports

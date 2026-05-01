@@ -9,15 +9,13 @@ import (
 
 // Diagnosis represents a single alert diagnosis record.
 type Diagnosis struct {
-	ID          int64     `json:"id"`
-	SessionID   string    `json:"session_id"`
-	AlertName   string    `json:"alert_name"`
-	Fingerprint string    `json:"fingerprint"`
-	AlertRaw    string    `json:"alert_raw"`
-	Diagnosis   string    `json:"diagnosis"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	Distance    float64   `json:"distance,omitempty"` // cosine distance from vector search, 0 otherwise
+	ID        int64     `json:"id"`
+	SessionID string    `json:"session_id"`
+	AlertRaw  string    `json:"alert_raw"`
+	Diagnosis string    `json:"diagnosis"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Distance  float64   `json:"distance,omitempty"` // cosine distance from vector search, 0 otherwise
 }
 
 // Message represents a single message in a diagnosis session.
@@ -34,7 +32,7 @@ type Store interface {
 	// SaveDiagnosis stores or updates a diagnosis result for a session.
 	// If embedding is non-nil, it is stored in a pgvector column for
 	// similarity search.
-	SaveDiagnosis(ctx context.Context, sessionID, fingerprint, alertName, alertRaw, diagnosis string, embedding []float32) error
+	SaveDiagnosis(ctx context.Context, sessionID, alertRaw, diagnosis string, embedding []float32) error
 
 	// GetDiagnosis retrieves a diagnosis by session ID.
 	GetDiagnosis(ctx context.Context, sessionID string) (*Diagnosis, error)
@@ -47,9 +45,6 @@ type Store interface {
 
 	// GetMessages retrieves all messages for a session, ordered by creation time.
 	GetMessages(ctx context.Context, sessionID string) ([]Message, error)
-
-	// SearchByFingerprint finds diagnoses with a similar fingerprint prefix.
-	SearchByFingerprint(ctx context.Context, fingerprint string, limit int) ([]Diagnosis, error)
 
 	// SearchByVector finds diagnoses with similar embedding vectors using
 	// cosine distance (<=>). Requires pgvector extension on PostgreSQL.

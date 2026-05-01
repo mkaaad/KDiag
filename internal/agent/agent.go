@@ -14,7 +14,6 @@ import (
 	"github.com/mkaaad/kdiag/config"
 	"github.com/mkaaad/kdiag/internal/correlation"
 	"github.com/mkaaad/kdiag/internal/memory"
-	"github.com/mkaaad/kdiag/internal/store"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
 )
@@ -108,40 +107,26 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 		msg = msg + corrCtx
 	}
 
-	// Search for similar past diagnoses by fingerprint and inject into message.
-	if c.Store != nil {
-		if fp := store.AlertFingerprint(msg); fp != "" {
-			if similar, err := c.Store.SearchByFingerprint(ctx, fp, 3); err == nil && len(similar) > 0 {
-				var sb strings.Builder
-				sb.WriteString("\n\n## 📋 相似历史案例（指纹匹配）\n以下是与当前告警指纹相似的历史诊断记录：\n\n")
-				for _, d := range similar {
-					fmt.Fprintf(&sb, "- **%s** (%s): %s\n", d.AlertName, d.CreatedAt.Format("2006-01-02 15:04"), truncate(d.Diagnosis, 120))
-				}
-				sb.WriteString("\n参考历史案例有助于更快定位根因。\n")
-				msg = msg + sb.String()
+	// Semantic search via vector embedding if an embedder is configured.
+	if c.Store != nil && c.Embedder != nil {
+		vecF64, err := c.Embedder.EmbedQuery(ctx, msg)
+		if err == nil && len(vecF64) > 0 {
+			vec := make([]float32, len(vecF64))
+			for i, v := range vecF64 {
+				vec[i] = float32(v)
 			}
-		}
-		// Semantic search via vector embedding if an embedder is configured.
-		if c.Embedder != nil {
-			vecF64, err := c.Embedder.EmbedQuery(ctx, msg)
-			if err == nil && len(vecF64) > 0 {
-				vec := make([]float32, len(vecF64))
-				for i, v := range vecF64 {
-					vec[i] = float32(v)
-				}
-				if similar, err := c.Store.SearchByVector(ctx, vec, 3); err == nil && len(similar) > 0 {
-					var sb strings.Builder
-					sb.WriteString("\n\n## 🔍 语义相似历史案例\n以下是与当前告警语义相似的历史诊断记录（基于向量检索）：\n\n")
-					for _, d := range similar {
-						dist := ""
-						if d.Distance > 0 {
-							dist = fmt.Sprintf(" (距离: %.4f)", d.Distance)
-						}
-						fmt.Fprintf(&sb, "- **%s** (%s)%s: %s\n", d.AlertName, d.CreatedAt.Format("2006-01-02 15:04"), dist, truncate(d.Diagnosis, 120))
+			if similar, err := c.Store.SearchByVector(ctx, vec, 3); err == nil && len(similar) > 0 {
+				var sb strings.Builder
+				sb.WriteString("\n\n## 🔍 语义相似历史案例\n以下是与当前告警语义相似的历史诊断记录（基于向量检索）：\n\n")
+				for _, d := range similar {
+					dist := ""
+					if d.Distance > 0 {
+						dist = fmt.Sprintf(" (距离: %.4f)", d.Distance)
 					}
-					sb.WriteString("\n语义相似的案例可能涉及不同告警但根因相同，值得参考。\n")
-					msg = msg + sb.String()
+					fmt.Fprintf(&sb, "- **%s** (%s)%s: %s\n", d.SessionID, d.CreatedAt.Format("2006-01-02 15:04"), dist, truncate(d.Diagnosis, 120))
 				}
+				sb.WriteString("\n语义相似的案例可能涉及不同告警但根因相同，值得参考。\n")
+				msg = msg + sb.String()
 			}
 		}
 	}
@@ -166,8 +151,6 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 	if c.Store != nil {
 		// Derive a deterministic session ID from the alert content via SHA256.
 		sessionID := fmt.Sprintf("alert-%x", sha256.Sum256([]byte(msg)))
-		fp := store.AlertFingerprint(msg)
-		an := store.AlertName(msg)
 
 		// Compute embedding of the diagnosis output for future vector search.
 		var emb []float32
@@ -180,7 +163,7 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 				}
 			}
 		}
-		_ = c.Store.SaveDiagnosis(ctx, sessionID, fp, an, msg, answer, emb)
+		_ = c.Store.SaveDiagnosis(ctx, sessionID, msg, answer, emb)
 	}
 	return answer
 }
