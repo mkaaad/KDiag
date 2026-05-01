@@ -127,10 +127,10 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 	var agent agents.Agent
 	if c.OpenAIFuncCall {
 		sysMsgOpt := agents.NewOpenAIOption().
-			WithSystemMessage(agentPrompt)
+			WithSystemMessage(AgentPrompt(c.Language.String()))
 		agent = agents.NewOpenAIFunctionsAgent(c.LLM, c.Tools, sysMsgOpt)
 	} else {
-		agent = agents.NewConversationalAgent(c.LLM, c.Tools, agents.WithPromptPrefix(agentPrompt))
+		agent = agents.NewConversationalAgent(c.LLM, c.Tools, agents.WithPromptPrefix(AgentPrompt(c.Language.String())))
 	}
 	// Create an executor with the adaptive iteration limit.
 	maxIter := maxIterForSeverity(severity, c.MaxIterations)
