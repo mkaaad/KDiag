@@ -9,10 +9,12 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/mkaaad/kdiag/config"
 	"github.com/mkaaad/kdiag/internal/correlation"
 	"github.com/mkaaad/kdiag/internal/memory"
+	"github.com/mkaaad/kdiag/internal/store"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
 )
@@ -74,6 +76,13 @@ func maxIterForSeverity(severity string, configured int) int {
 	}
 }
 
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
 // Diag runs the LLM agent to diagnose the given alert message. It creates the
 // appropriate agent type based on config.OpenAIFuncCall, wraps it in an executor
 // with the configured maximum iterations, and runs the agent with the alert
@@ -99,6 +108,21 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 		msg = msg + corrCtx
 	}
 
+	// Search for similar past diagnoses and inject into message.
+	if c.Store != nil {
+		if fp := store.AlertFingerprint(msg); fp != "" {
+			if similar, err := c.Store.SearchByFingerprint(ctx, fp, 3); err == nil && len(similar) > 0 {
+				var sb strings.Builder
+				sb.WriteString("\n\n## 📋 相似历史案例\n以下是与当前告警指纹相似的历史诊断记录：\n\n")
+				for _, d := range similar {
+					sb.WriteString(fmt.Sprintf("- **%s** (%s): %s\n", d.AlertName, d.CreatedAt.Format("2006-01-02 15:04"), truncate(d.Diagnosis, 120)))
+				}
+				sb.WriteString("\n参考历史案例有助于更快定位根因。\n")
+				msg = msg + sb.String()
+			}
+		}
+	}
+
 	// Choose agent type based on configuration.
 	var agent agents.Agent
 	if c.OpenAIFuncCall {
@@ -119,7 +143,9 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 	if c.Store != nil {
 		// Derive a deterministic session ID from the alert content via SHA256.
 		sessionID := fmt.Sprintf("alert-%x", sha256.Sum256([]byte(msg)))
-		_ = c.Store.SaveDiagnosis(ctx, sessionID, msg, answer)
+		fp := store.AlertFingerprint(msg)
+		an := store.AlertName(msg)
+		_ = c.Store.SaveDiagnosis(ctx, sessionID, fp, an, msg, answer)
 	}
 	return answer
 }

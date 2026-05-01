@@ -32,12 +32,14 @@ func (c PostgresConfig) DSN() string {
 
 // diagnosisModel is the GORM model for the diagnoses table.
 type diagnosisModel struct {
-	ID        int64     `gorm:"primaryKey;autoIncrement"`
-	SessionID string    `gorm:"uniqueIndex;not null;type:text"`
-	AlertRaw  string    `gorm:"not null;type:text"`
-	Diagnosis string    `gorm:"not null;default:'';type:text"`
-	CreatedAt time.Time `gorm:"autoCreateTime"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime"`
+	ID          int64     `gorm:"primaryKey;autoIncrement"`
+	SessionID   string    `gorm:"uniqueIndex;not null;type:text"`
+	AlertName   string    `gorm:"index;not null;default:'';type:text"`
+	Fingerprint string    `gorm:"index;not null;default:'';type:text"`
+	AlertRaw    string    `gorm:"not null;type:text"`
+	Diagnosis   string    `gorm:"not null;default:'';type:text"`
+	CreatedAt   time.Time `gorm:"autoCreateTime"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime"`
 }
 
 // messageModel is the GORM model for the messages table.
@@ -84,11 +86,13 @@ func (s *PostgresStore) migrate() error {
 }
 
 // SaveDiagnosis inserts or updates a diagnosis record using upsert.
-func (s *PostgresStore) SaveDiagnosis(ctx context.Context, sessionID, alertRaw, diagnosis string) error {
+func (s *PostgresStore) SaveDiagnosis(ctx context.Context, sessionID, fingerprint, alertName, alertRaw, diagnosis string) error {
 	record := &diagnosisModel{
-		SessionID: sessionID,
-		AlertRaw:  alertRaw,
-		Diagnosis: diagnosis,
+		SessionID:   sessionID,
+		Fingerprint: fingerprint,
+		AlertName:   alertName,
+		AlertRaw:    alertRaw,
+		Diagnosis:   diagnosis,
 	}
 	return s.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
@@ -96,6 +100,27 @@ func (s *PostgresStore) SaveDiagnosis(ctx context.Context, sessionID, alertRaw, 
 			DoUpdates: clause.AssignmentColumns([]string{"diagnosis", "updated_at"}),
 		}).
 		Create(record).Error
+}
+
+// SearchByFingerprint finds diagnoses with matching or similar fingerprint prefix.
+func (s *PostgresStore) SearchByFingerprint(ctx context.Context, fingerprint string, limit int) ([]Diagnosis, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	var models []diagnosisModel
+	err := s.db.WithContext(ctx).
+		Where("fingerprint LIKE ?", fingerprint[:16]+"%").
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&models).Error
+	if err != nil {
+		return nil, err
+	}
+	results := make([]Diagnosis, len(models))
+	for i, m := range models {
+		results[i] = *modelToDiagnosis(&m)
+	}
+	return results, nil
 }
 
 // GetDiagnosis retrieves a diagnosis by session ID.
@@ -172,11 +197,13 @@ func (s *PostgresStore) Close() error {
 
 func modelToDiagnosis(m *diagnosisModel) *Diagnosis {
 	return &Diagnosis{
-		ID:        m.ID,
-		SessionID: m.SessionID,
-		AlertRaw:  m.AlertRaw,
-		Diagnosis: m.Diagnosis,
-		CreatedAt: m.CreatedAt,
-		UpdatedAt: m.UpdatedAt,
+		ID:          m.ID,
+		SessionID:   m.SessionID,
+		AlertName:   m.AlertName,
+		Fingerprint: m.Fingerprint,
+		AlertRaw:    m.AlertRaw,
+		Diagnosis:   m.Diagnosis,
+		CreatedAt:   m.CreatedAt,
+		UpdatedAt:   m.UpdatedAt,
 	}
 }
