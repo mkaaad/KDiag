@@ -31,6 +31,8 @@ KDiag 是一个 Go 库，接收 Prometheus Alertmanager 的告警通知，利用
 | **Loki** | 4 | LogQL 即时/范围查询、标签名、标签值发现 |
 | **Gitea** | 8 | 组织/仓库/分支列表、文件浏览、提交历史、Diff 查看 |
 | **Memory** | 3 | 历史情报搜索、详情阅读、新知存储（8 类预设分类） |
+| **Correlation** | — | 时空关联引擎：告警时间锚定 Prometheus 范围查询、Jaeger 错误 Trace、Loki 错误日志 |
+| **Fingerprint** | — | 告警指纹聚类：SHA256 标签哈希 + 相似案例检索（PostgreSQL LIKE 前缀匹配） |
 
 - **HTTP Webhook 接入** — 提供 `net/http` Handler，接收 Alertmanager 告警推送
 - **定时轮询** — 支持按配置间隔轮询 Prometheus 当前告警
@@ -38,6 +40,10 @@ KDiag 是一个 Go 库，接收 Prometheus Alertmanager 的告警通知，利用
 - **可定制系统提示词** — 内置 SRE 告警分析工作流提示词，输出结构化 Markdown 报告
 - **自主记忆系统** — Agent 可自主搜索历史情报、展开详情、存入新知，诊断前自动注入相关上下文
 - **诊断持久化** — 告警诊断结果自动存入 PostgreSQL，支持历史回溯
+- **自适应诊断深度** — 根据告警 severity（critical/warning/info）动态调整迭代次数（15/10/5）和提示引导
+- **故障树自动生成** — 诊断报告中自动包含 Mermaid 流程图，可视化根因链条
+- **时空关联引擎** — 告警触发前后自动拉取 Prometheus 指标趋势、Jaeger 错误链路、Loki 错误日志，注入 Agent 上下文
+- **告警指纹聚类** — 基于 SHA256 标签哈希自动聚类同类告警，注入相似历史案例加速根因定位
 
 ## 项目亮点 / Highlights
 
@@ -59,6 +65,10 @@ KDiag 是一个 Go 库，接收 Prometheus Alertmanager 的告警通知，利用
 - **整洁架构** — Public API（`kdiag.go`/`config/`）与 Internal 实现（`agent`/`client`/`tool`）严格分层，职责单一
 - **工厂模式注册** — 统一 `client.New*Client()` 工厂，内部自动完成连接验证 + 工具注册，上层调用零配置入侵
 - **完善的 Agent 提示词工程** — 内置 SRE 告警分析工作流提示词，输出格式化 Markdown 诊断报告，包含根因概率排序、应急处置步骤、长期改进建议
+- **自适应诊断深度** — 根据告警 severity（critical=15轮、warning=10轮、info=5轮）动态调整 Agent 迭代次数，资源高效分配
+- **故障树自动生成** — Agent 输出中包含 Mermaid 流程图，从根因→中间因→直接因→症状→告警触发，可视化根因传播链条
+- **时空关联引擎** — 告警触发时间锚定窗口（前30分钟→后15分钟），自动并行查询 Prometheus 5维指标、Jaeger 错误 Trace、Loki 错误日志，注入 Agent 上下文
+- **告警指纹聚类** — 基于告警标签的 SHA256 哈希实现指纹计算，诊断前自动检索相似历史案例并注入 Agent，减少重复分析
 
 ### 🎯 落地场景 / Use Cases
 
@@ -104,17 +114,20 @@ config/
   config_test.go      # 单元测试
 internal/
   agent/
-    agent.go          # LLM Agent 创建与执行
-    prompt.go         # 系统提示词（SRE 告警分析工作流）
+    agent.go          # LLM Agent 创建与执行；自适应深度、关联注入、指纹相似案例检索
+    prompt.go         # 系统提示词（SRE 告警分析工作流 + Mermaid 故障树 + 工具引导）
   client/
     client.go         # 客户端工厂（Prometheus / Gitea / Jaeger / Loki / Memory / Store）
+  correlation/
+    engine.go         # 时空关联引擎：告警时间锚定跨数据源上下文构建
   memory/
     model.go          # 记忆模型、8 类预设分类、Store 接口
     store.go          # PostgresStore 实现（GORM + PostgreSQL）
     tools.go          # SearchMemory / ReadMemory / Remember + 标签提取 / 上下文注入
   store/
-    store.go          # 诊断存储接口
+    store.go          # 诊断存储接口（SaveDiagnosis / SearchByFingerprint 等）
     postgres.go       # PostgresStore 实现
+    fingerprint.go    # 告警指纹计算（SHA256 标签哈希）+ AlertName 提取
   tool/
     metrics.go        # 4 个 Prometheus 查询工具
     gitea.go          # 8 个 Gitea API 工具
@@ -152,11 +165,17 @@ KDiag is a Go library that receives Prometheus Alertmanager webhook notification
   | **Loki** | 4 | LogQL instant/range queries, label name/value discovery |
   | **Gitea** | 8 | Org/repo/branch listing, file browsing, commit history, diff |
   | **Memory** | 3 | Historical intelligence search, detail read, knowledge persist (8 categories) |
+  | **Correlation** | — | Time-anchored cross-datasource engine: Prometheus range queries, Jaeger error traces, Loki error logs |
+  | **Fingerprint** | — | SHA256 label hash clustering + similar case retrieval via PostgreSQL LIKE prefix match |
 
 - **Two Agent Modes** — OpenAI Function Calling Agent or Conversational Agent
 - **Customizable System Prompt** — Built-in SRE alert analysis workflow prompt that outputs structured Markdown reports
 - **Autonomous Memory System** — Agent can store/retrieve intelligence with 8 preset categories, auto-injected context
 - **Diagnosis Persistence** — PostgreSQL-backed diagnosis history and alert correlation
+- **Adaptive Depth** — Dynamically adjusts max iterations (15/10/5) and prompt guidance based on alert severity
+- **Fault Tree Generation** — Mermaid flowchart in every diagnosis output visualizing the root cause chain
+- **Correlation Engine** — Pre-fetches Prometheus metrics, Jaeger error traces, Loki error logs around alert time window
+- **Alert Fingerprint Clustering** — SHA256-based label hashing + automatic similar case retrieval before each diagnosis
 
 ### Quick Start
 
@@ -196,17 +215,20 @@ config/
   config_test.go      # Unit tests
 internal/
   agent/
-    agent.go          # LLM Agent creation & execution
-    prompt.go         # System prompt (SRE alert analysis workflow)
+    agent.go          # LLM Agent creation & execution; adaptive depth, correlation injection, fingerprint similar-case retrieval
+    prompt.go         # System prompt (SRE workflow + Mermaid fault tree + tool guidance)
   client/
     client.go         # Client factories (Prometheus / Gitea / Jaeger / Loki / Memory / Store)
+  correlation/
+    engine.go         # Time-anchored cross-datasource context builder
   memory/
     model.go          # Memory model, 8 categories, Store interface
     store.go          # PostgresStore (GORM + PostgreSQL)
     tools.go          # SearchMemory / ReadMemory / Remember + label extraction / context injection
   store/
-    store.go          # Diagnosis store interface
+    store.go          # Diagnosis store interface (SaveDiagnosis / SearchByFingerprint, etc.)
     postgres.go       # PostgresStore implementation
+    fingerprint.go    # Alert fingerprint (SHA256 label hash) + AlertName extraction
   tool/
     metrics.go        # 4 Prometheus query tools
     gitea.go          # 8 Gitea API tools
