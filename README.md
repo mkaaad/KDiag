@@ -32,7 +32,6 @@ KDiag 是一个 Go 库，接收 Prometheus Alertmanager 的告警通知，利用
 | **Gitea** | 8 | 组织/仓库/分支列表、文件浏览、提交历史、Diff 查看 |
 | **Memory** | 3 | 历史情报搜索、详情阅读、新知存储（8 类预设分类） |
 | **Correlation** | — | 时空关联引擎：告警时间锚定 Prometheus 范围查询、Jaeger 错误 Trace、Loki 错误日志 |
-| **Fingerprint** | — | 告警指纹聚类：SHA256 标签哈希 + 相似案例检索（PostgreSQL LIKE 前缀匹配） |
 | **pgvector** | — | 语义向量检索：诊断结果自动转为 embedding，余弦距离搜索相似历史（HNSW 索引） |
 
 - **HTTP Webhook 接入** — 提供 `net/http` Handler，接收 Alertmanager 告警推送
@@ -44,8 +43,44 @@ KDiag 是一个 Go 库，接收 Prometheus Alertmanager 的告警通知，利用
 - **自适应诊断深度** — 根据告警 severity（critical/warning/info）动态调整迭代次数（15/10/5）和提示引导
 - **故障树自动生成** — 诊断报告中自动包含 Mermaid 流程图，可视化根因链条
 - **时空关联引擎** — 告警触发前后自动拉取 Prometheus 指标趋势、Jaeger 错误链路、Loki 错误日志，注入 Agent 上下文
-- **告警指纹聚类** — 基于 SHA256 标签哈希自动聚类同类告警，注入相似历史案例加速根因定位
 - **语义向量检索** — 诊断结果自动通过 LLM 转为 embedding 存入 pgvector，跨告警名语义搜索相似根因
+
+### 分层诊断树（信息树状索引）
+
+Agent 不再接收扁平告警，而是接收一棵由数据关联构建的信息树。树中每个节点代表一条可展开的信息线索，Agent 自行判断哪些分支有价值、展开到多深：
+
+```
+告警: us-east-1a 节点宕机
+ │
+ ├─ [Trace] POST /api/order (p99=5.2s, 错误率 12%)
+ │   ├─ Span: order-service.validate (942ms)
+ │   │   └─ [Log] user=10086, "db connection pool exhausted"
+ │   ├─ Span: order-service.inventory (2.1s)
+ │   │   └─ [Log] "inventory rpc timeout after 2s"
+ │   └─ Span: payment-gateway.charge (1.8s)        ← Agent 判定此 Branch 正常，不展开
+ │
+ └─ [Trace] GET /api/health (403)
+     ├─ Span: auth.verify (12ms)                     ← Agent 展开只看 Log
+     │   └─ [Log] "token expired, refresh failed"
+     └─ Span: proxy.auth (340ms)                     ← Agent 判定不相关，折叠
+```
+
+构建方式：每条 Trace 作为一级节点，其 Spans 作为二级节点，`trace_id` 匹配的 Log 注入到对应 Span 下。Agent 收到这棵树后：
+
+- **根节点摘要** → 链路名 + 关键指标（p99、错误率）
+- **展开一个 Span** → 注入该 Span 的完整 metadata + 关联 Log
+- **展开 Log** → 注入原始日志行
+- Agent 也可以跨分支 "对比式展开"（同时看两条 Trace 的同名 Span）
+
+| 数据源 | 树中角色 | 展开成本 |
+|--------|---------|----------|
+| Jaeger Trace | 一级节点（入口链路） | 摘要轻量，展开需查 Span |
+| Jaeger Span | 二级节点（单次调用） | 展开需查关联 Log |
+| Loki Log | 叶子节点（原始日志） | 按行注入，成本最高 |
+
+- **Lazy 注入** — 展开前数据不在上下文中，Agent 通过工具调用控制展开深度
+- **跨分支合并** — 多条 Trace 的同 Session Log 自动去重，不重复注入
+- **Agent 自主判定** — Agent 可跳过明显正常的 Span，聚焦异常路径
 
 ## 项目亮点 / Highlights
 
@@ -70,7 +105,6 @@ KDiag 是一个 Go 库，接收 Prometheus Alertmanager 的告警通知，利用
 - **自适应诊断深度** — 根据告警 severity（critical=15轮、warning=10轮、info=5轮）动态调整 Agent 迭代次数，资源高效分配
 - **故障树自动生成** — Agent 输出中包含 Mermaid 流程图，从根因→中间因→直接因→症状→告警触发，可视化根因传播链条
 - **时空关联引擎** — 告警触发时间锚定窗口（前30分钟→后15分钟），自动并行查询 Prometheus 5维指标、Jaeger 错误 Trace、Loki 错误日志，注入 Agent 上下文
-- **告警指纹聚类** — 基于告警标签的 SHA256 哈希实现指纹计算，诊断前自动检索相似历史案例并注入 Agent，减少重复分析
 - **语义向量检索** — 诊断结果自动通过 LLM 转为 embedding 存入 pgvector（HNSW 索引），量前模糊搜索语义相似的历史诊断，跨告警名发现根因关联
 
 ### 🎯 落地场景 / Use Cases
@@ -117,7 +151,7 @@ config/
   config_test.go      # 单元测试
 internal/
   agent/
-    agent.go          # LLM Agent 创建与执行；自适应深度、关联注入、指纹相似案例检索
+    agent.go          # LLM Agent 创建与执行；自适应深度、关联注入、语义向量检索
     prompt.go         # 系统提示词（SRE 告警分析工作流 + Mermaid 故障树 + 工具引导）
   client/
     client.go         # 客户端工厂（Prometheus / Gitea / Jaeger / Loki / Memory / Store）
@@ -128,9 +162,8 @@ internal/
     store.go          # PostgresStore 实现（GORM + PostgreSQL）
     tools.go          # SearchMemory / ReadMemory / Remember + 标签提取 / 上下文注入
   store/
-    store.go          # 诊断存储接口（SaveDiagnosis / SearchByFingerprint / SearchByVector 等）
+    store.go          # 诊断存储接口（SaveDiagnosis / SearchByVector 等）
     postgres.go       # PostgresStore 实现（含 pgvector 向量列 + HNSW 索引）
-    fingerprint.go    # 告警指纹计算（SHA256 标签哈希）+ AlertName 提取
   tool/
     metrics.go        # 4 个 Prometheus 查询工具
     gitea.go          # 8 个 Gitea API 工具
@@ -169,7 +202,6 @@ KDiag is a Go library that receives Prometheus Alertmanager webhook notification
   | **Gitea** | 8 | Org/repo/branch listing, file browsing, commit history, diff |
   | **Memory** | 3 | Historical intelligence search, detail read, knowledge persist (8 categories) |
   | **Correlation** | — | Time-anchored cross-datasource engine: Prometheus range queries, Jaeger error traces, Loki error logs |
-  | **Fingerprint** | — | SHA256 label hash clustering + similar case retrieval via PostgreSQL LIKE prefix match |
   | **pgvector** | — | Semantic vector search: diagnosis embeddings via LLM, cosine distance with HNSW index |
 
 - **Two Agent Modes** — OpenAI Function Calling Agent or Conversational Agent
@@ -179,8 +211,39 @@ KDiag is a Go library that receives Prometheus Alertmanager webhook notification
 - **Adaptive Depth** — Dynamically adjusts max iterations (15/10/5) and prompt guidance based on alert severity
 - **Fault Tree Generation** — Mermaid flowchart in every diagnosis output visualizing the root cause chain
 - **Correlation Engine** — Pre-fetches Prometheus metrics, Jaeger error traces, Loki error logs around alert time window
-- **Alert Fingerprint Clustering** — SHA256-based label hashing + automatic similar case retrieval before each diagnosis
 - **Semantic Vector Search** — Diagnosis output embedded via LLM into pgvector, cross-alert semantic similarity retrieval with HNSW index
+
+### Hierarchical Information Tree
+
+Instead of a flat alert payload, the Agent receives a tree built from cross-datasource relationships. Each node is an expandable clue — the Agent decides which branches are worth exploring and how deep to go:
+
+```
+Alert: us-east-1a nodes down
+ │
+ ├─ [Trace] POST /api/order (p99=5.2s, error 12%)
+ │   ├─ Span: order-service.validate (942ms)
+ │   │   └─ [Log] user=10086, "db connection pool exhausted"
+ │   ├─ Span: order-service.inventory (2.1s)
+ │   │   └─ [Log] "inventory rpc timeout after 2s"
+ │   └─ Span: payment-gateway.charge (1.8s)     ← Agent skips, looks healthy
+ │
+ └─ [Trace] GET /api/health (403)
+     ├─ Span: auth.verify (12ms)                 ← Agent expands log only
+     │   └─ [Log] "token expired, refresh failed"
+     └─ Span: proxy.auth (340ms)                 ← Agent collapses, irrelevant
+```
+
+Construction: every Trace becomes a top-level node, its Spans are children, and `trace_id`-matched Logs are injected under their respective Span. The Agent sees the collapsed tree and expands nodes on demand via tool calls.
+
+| Datasource | Tree Role | Expansion Cost |
+|-----------|-----------|----------------|
+| Jaeger Trace | Level 1 (entry points) | Summary cheap, expand needs Span query |
+| Jaeger Span | Level 2 (individual calls) | Expand needs associated Log |
+| Loki Log | Leaf (raw log lines) | Per-line injection, highest cost |
+
+- **Lazy injection** — No data enters context until the Agent explicitly expands a node via tool call
+- **Cross-branch dedup** — Same session logs across multiple Traces are injected only once
+- **Agent-driven exploration** — The Agent autonomously prunes healthy branches and drills into suspicious paths
 
 ### Quick Start
 
@@ -220,7 +283,7 @@ config/
   config_test.go      # Unit tests
 internal/
   agent/
-    agent.go          # LLM Agent creation & execution; adaptive depth, correlation injection, fingerprint similar-case retrieval
+    agent.go          # LLM Agent creation & execution; adaptive depth, correlation injection, vector search
     prompt.go         # System prompt (SRE workflow + Mermaid fault tree + tool guidance)
   client/
     client.go         # Client factories (Prometheus / Gitea / Jaeger / Loki / Memory / Store)
@@ -231,9 +294,8 @@ internal/
     store.go          # PostgresStore (GORM + PostgreSQL)
     tools.go          # SearchMemory / ReadMemory / Remember + label extraction / context injection
   store/
-    store.go          # Diagnosis store interface (SaveDiagnosis / SearchByFingerprint / SearchByVector, etc.)
+    store.go          # Diagnosis store interface (SaveDiagnosis / SearchByVector, etc.)
     postgres.go       # PostgresStore with pgvector column + HNSW index
-    fingerprint.go    # Alert fingerprint (SHA256 label hash) + AlertName extraction
   tool/
     metrics.go        # 4 Prometheus query tools
     gitea.go          # 8 Gitea API tools

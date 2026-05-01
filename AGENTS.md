@@ -102,7 +102,7 @@ Each datasource has a query input struct (`MetricsQuery`, `GiteaQuery`, `JaegerQ
 - System prompt (`AgentPrompt()` in `prompt.go`) defines SRE alert analysis workflow with strict Markdown output, including a `## 🔗 Fault Tree` Mermaid flowchart section
 - **Adaptive depth**: `severityFromMsg()` parses severity from Alertmanager JSON; `depthInstruction()` prepends severity-appropriate guidance; `maxIterForSeverity()` sets dynamic iteration limits (critical=15, warning=10, info=5)
 - Before each diagnosis, `Diag()` calls `memory.ExtractTags()` to parse alert labels, then `memory.BuildMemoryContext()` to inject relevant memory summaries at the top of the user message
-- After memory context, `correlation.BuildContext()` queries Prometheus range, Jaeger traces, and Loki logs around the alert time window and injects results
+- After memory context, `correlation.BuildContext()` injects a time window table (alert trigger ± 30min/−15min) and lists available tools. The agent uses tools to query data — nothing is prefetched.
 - Then `store.SearchByFingerprint()` finds similar past diagnoses and injects as a "相似历史案例" context block
 - After agent execution, the result is persisted via `c.Store.SaveDiagnosis()` with fingerprint and alert name
 
