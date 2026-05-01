@@ -39,6 +39,14 @@ func NewHandlerFunc(ctx context.Context, c *config.Config) http.HandlerFunc {
 	if err != nil {
 		//TODO
 	}
+	err = client.NewPostgresStore(ctx, c)
+	if err != nil {
+		//TODO
+	}
+	err = client.NewMemoryStore(ctx, c)
+	if err != nil {
+		//TODO
+	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Read the full Alertmanager webhook payload from the request body.
@@ -77,6 +85,14 @@ func PollAlerts(ctx context.Context, c *config.Config) {
 		//TODO
 	}
 	err = client.NewLokiClient(c)
+	if err != nil {
+		//TODO
+	}
+	err = client.NewPostgresStore(ctx, c)
+	if err != nil {
+		//TODO
+	}
+	err = client.NewMemoryStore(ctx, c)
 	if err != nil {
 		//TODO
 	}

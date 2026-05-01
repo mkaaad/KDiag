@@ -1,6 +1,7 @@
 // Package client provides a factory for creating and validating Prometheus
-// API clients. It wraps the prometheus/client_golang library and performs a
-// connectivity check via the /api/v1/buildinfo endpoint at creation time.
+// API clients and other backend clients. It wraps the prometheus/client_golang
+// library and performs a connectivity check via the /api/v1/buildinfo endpoint
+// at creation time.
 package client
 
 import (
@@ -10,6 +11,8 @@ import (
 
 	"code.gitea.io/sdk/gitea"
 	"github.com/mkaaad/kdiag/config"
+	"github.com/mkaaad/kdiag/internal/memory"
+	"github.com/mkaaad/kdiag/internal/store"
 	"github.com/mkaaad/kdiag/internal/tool"
 	"github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
@@ -98,6 +101,45 @@ func NewLokiClient(c *config.Config) error {
 		return err
 	}
 	tools := tool.NewLokiQueryTool(lokiClient)
+	c.Tools = append(c.Tools, tools...)
+	return nil
+}
+
+// NewPostgresStore creates a PostgreSQL store and assigns it to c.Store.
+// If the config's PostgresConfig has an empty Host, it skips initialization
+// and returns nil.
+func NewPostgresStore(ctx context.Context, c *config.Config) error {
+	if c.PostgresConfig.Host == "" {
+		return nil
+	}
+	s, err := store.NewPostgresStore(ctx, c.PostgresConfig)
+	if err != nil {
+		return err
+	}
+	c.Store = s
+	return nil
+}
+
+// NewMemoryStore creates a PostgreSQL-backed memory store and registers the
+// three memory tools (SearchMemory, ReadMemory, Remember) with the config.
+// If the config's PostgresConfig has an empty Host, it skips initialization
+// and returns nil.
+func NewMemoryStore(ctx context.Context, c *config.Config) error {
+	if c.PostgresConfig.Host == "" {
+		return nil
+	}
+	s, err := memory.NewPostgresStore(ctx, memory.PostgresConfig{
+		Host:     c.PostgresConfig.Host,
+		Port:     c.PostgresConfig.Port,
+		User:     c.PostgresConfig.User,
+		Password: c.PostgresConfig.Password,
+		Database: c.PostgresConfig.Database,
+	})
+	if err != nil {
+		return err
+	}
+	c.MemoryStore = s
+	tools := memory.NewTools(s)
 	c.Tools = append(c.Tools, tools...)
 	return nil
 }

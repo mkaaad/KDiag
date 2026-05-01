@@ -30,11 +30,14 @@ KDiag 是一个 Go 库，接收 Prometheus Alertmanager 的告警通知，利用
 | **Jaeger** | 4 | 服务/操作列表、链路搜索、Trace 详情查询 |
 | **Loki** | 4 | LogQL 即时/范围查询、标签名、标签值发现 |
 | **Gitea** | 8 | 组织/仓库/分支列表、文件浏览、提交历史、Diff 查看 |
+| **Memory** | 3 | 历史情报搜索、详情阅读、新知存储（8 类预设分类） |
 
 - **HTTP Webhook 接入** — 提供 `net/http` Handler，接收 Alertmanager 告警推送
 - **定时轮询** — 支持按配置间隔轮询 Prometheus 当前告警
 - **两种 Agent 模式** — 支持 OpenAI Function Calling Agent 与 Conversational Agent
 - **可定制系统提示词** — 内置 SRE 告警分析工作流提示词，输出结构化 Markdown 报告
+- **自主记忆系统** — Agent 可自主搜索历史情报、展开详情、存入新知，诊断前自动注入相关上下文
+- **诊断持久化** — 告警诊断结果自动存入 PostgreSQL，支持历史回溯
 
 ## 项目亮点 / Highlights
 
@@ -104,7 +107,14 @@ internal/
     agent.go          # LLM Agent 创建与执行
     prompt.go         # 系统提示词（SRE 告警分析工作流）
   client/
-    client.go         # 客户端工厂（Prometheus / Gitea / Jaeger / Loki）
+    client.go         # 客户端工厂（Prometheus / Gitea / Jaeger / Loki / Memory / Store）
+  memory/
+    model.go          # 记忆模型、8 类预设分类、Store 接口
+    store.go          # PostgresStore 实现（GORM + PostgreSQL）
+    tools.go          # SearchMemory / ReadMemory / Remember + 标签提取 / 上下文注入
+  store/
+    store.go          # 诊断存储接口
+    postgres.go       # PostgresStore 实现
   tool/
     metrics.go        # 4 个 Prometheus 查询工具
     gitea.go          # 8 个 Gitea API 工具
@@ -141,9 +151,12 @@ KDiag is a Go library that receives Prometheus Alertmanager webhook notification
   | **Jaeger** | 4 | Service/operation listing, trace search, trace detail |
   | **Loki** | 4 | LogQL instant/range queries, label name/value discovery |
   | **Gitea** | 8 | Org/repo/branch listing, file browsing, commit history, diff |
+  | **Memory** | 3 | Historical intelligence search, detail read, knowledge persist (8 categories) |
 
 - **Two Agent Modes** — OpenAI Function Calling Agent or Conversational Agent
 - **Customizable System Prompt** — Built-in SRE alert analysis workflow prompt that outputs structured Markdown reports
+- **Autonomous Memory System** — Agent can store/retrieve intelligence with 8 preset categories, auto-injected context
+- **Diagnosis Persistence** — PostgreSQL-backed diagnosis history and alert correlation
 
 ### Quick Start
 
@@ -186,7 +199,14 @@ internal/
     agent.go          # LLM Agent creation & execution
     prompt.go         # System prompt (SRE alert analysis workflow)
   client/
-    client.go         # Client factories (Prometheus / Gitea / Jaeger / Loki)
+    client.go         # Client factories (Prometheus / Gitea / Jaeger / Loki / Memory / Store)
+  memory/
+    model.go          # Memory model, 8 categories, Store interface
+    store.go          # PostgresStore (GORM + PostgreSQL)
+    tools.go          # SearchMemory / ReadMemory / Remember + label extraction / context injection
+  store/
+    store.go          # Diagnosis store interface
+    postgres.go       # PostgresStore implementation
   tool/
     metrics.go        # 4 Prometheus query tools
     gitea.go          # 8 Gitea API tools

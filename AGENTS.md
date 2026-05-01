@@ -21,6 +21,10 @@ internal/
     prompt.go         # SRE/DevOps alert analysis system prompt (Markdown)
   client/
     client.go         # Factory functions for Prometheus, Gitea, Jaeger, Loki clients
+  memory/
+    model.go          # Memory struct, Category enum (8 categories), Store interface, input/output types
+    store.go          # PostgresStore implementing Store with GORM + PostgreSQL
+    tools.go          # SearchMemoryTool, ReadMemoryTool, RememberTool + ExtractTags/BuildMemoryContext
   tool/
     metrics.go        # 4 Prometheus PromQL query tools (Query, QueryRange, LabelName, LabelValue)
     gitea.go          # 8 Gitea API tools (ListOrgs, ListOrgRepos, ListRepoBranches, SearchRepos, GetTree, GetRawFile, ListRepoCommits, GetCommitDiff)
@@ -44,6 +48,9 @@ internal/
 | `github.com/prometheus/client_golang` v1.23.2 | Prometheus API client |
 | `code.gitea.io/sdk/gitea` v0.24.1 | Gitea API client |
 | `golang.org/x/text` v0.36.0 | Language tag (localization) |
+| `github.com/google/uuid` v1.6.0 | UUID generation for memory records |
+| `gorm.io/gorm` v1.31.1 | PostgreSQL ORM (memory + diagnosis store) |
+| `gorm.io/driver/postgres` v1.6.0 | PostgreSQL driver via GORM |
 
 ## Tool Inventory
 
@@ -86,6 +93,7 @@ Each datasource has a query input struct (`MetricsQuery`, `GiteaQuery`, `JaegerQ
   - `true`: `agents.NewOpenAIFunctionsAgent(c.LLM, c.Tools, ...)`
   - `false`: `agents.NewConversationalAgent(c.LLM, c.Tools, ...)`
 - System prompt (`agentPrompt` in `prompt.go`) defines SRE alert analysis workflow with strict Markdown output
+- Before each diagnosis, `Diag()` calls `memory.ExtractTags()` to parse alert labels, then `memory.BuildMemoryContext()` to inject relevant memory summaries at the top of the user message
 
 ### HTTP Handler Pattern
 - `NewHandlerFunc` returns `http.HandlerFunc`
@@ -104,3 +112,6 @@ Each datasource has a query input struct (`MetricsQuery`, `GiteaQuery`, `JaegerQ
 - Agent prompt `Language` field in Config is never consumed by the prompt
 - `internal/notify/notify.go` is a stub with only the package declaration
 - No tests exist for tool implementations or the agent
+- `memory.Store` and `memory.PostgresConfig` duplicate `store.PostgresConfig` fields — potential deduplication target
+- `Search()` uses PostgreSQL JSONB `??|` operator (requires PG 12+) for tag matching
+- LSP may show stale warning for `google/uuid` as indirect after `go mod tidy` — reload clears it

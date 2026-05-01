@@ -6,6 +6,8 @@ package config
 import (
 	"time"
 
+	"github.com/mkaaad/kdiag/internal/memory"
+	"github.com/mkaaad/kdiag/internal/store"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/tools"
 	"golang.org/x/text/language"
@@ -40,6 +42,15 @@ type Config struct {
 	// LokiAddress is the base URL of the Loki query frontend (e.g.,
 	// "http://localhost:3100"). If empty, Loki tools are not registered.
 	LokiAddress string
+	// PostgresConfig holds the connection parameters for the PostgreSQL store.
+	// If zero-valued, the store is not initialized.
+	PostgresConfig store.PostgresConfig
+	// Store is the storage backend for persisting diagnosis results and
+	// session data. If nil, persistence is disabled.
+	Store store.Store
+	// MemoryStore is the autonomous memory backend for environment intelligence.
+	// If nil, memory tools and context injection are disabled.
+	MemoryStore memory.Store
 }
 
 // GiteaConfig holds the connection details for the Gitea API client.
