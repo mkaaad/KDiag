@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -51,6 +52,37 @@ type messageModel struct {
 	CreatedAt time.Time `gorm:"autoCreateTime;index"`
 }
 
+// treeNodeModel is the GORM model for the tree_nodes table.
+type treeNodeModel struct {
+	ID        int64  `gorm:"primaryKey;autoIncrement"`
+	SessionID string `gorm:"index;not null;type:text"`
+	NodeID    string `gorm:"not null;type:text"`
+	Type      string `gorm:"not null;type:text"`
+	Summary   string `gorm:"not null;type:text"`
+	ParentID  string `gorm:"default:'';type:text"`
+	Meta      string `gorm:"default:'';type:text"` // JSON-encoded map
+	TraceID   string `gorm:"default:'';type:text;index"`
+	SpanID    string `gorm:"default:'';type:text"`
+	Service   string `gorm:"default:'';type:text"`
+	Query     string `gorm:"default:'';type:text"`
+}
+
+// traceLinkModel maps trace IDs to diagnosis sessions for cross-alert correlation.
+type traceLinkModel struct {
+	ID        int64  `gorm:"primaryKey;autoIncrement"`
+	TraceID   string `gorm:"index;not null;type:text"`
+	SessionID string `gorm:"index;not null;type:text"`
+}
+
+// treePathModel stores the tree path text and its embedding for vector search.
+type treePathModel struct {
+	ID        int64           `gorm:"primaryKey;autoIncrement"`
+	SessionID string          `gorm:"uniqueIndex;not null;type:text"`
+	PathText  string          `gorm:"not null;type:text"`
+	Embedding pgvector.Vector `gorm:"type:vector(1536)"`
+	CreatedAt time.Time       `gorm:"autoCreateTime"`
+}
+
 // NewPostgresStore creates a new PostgresStore, connects to the database,
 // and runs auto-migration.
 func NewPostgresStore(ctx context.Context, cfg PostgresConfig) (*PostgresStore, error) {
@@ -88,7 +120,7 @@ func (s *PostgresStore) migrate() error {
 	if err := s.db.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
 		return fmt.Errorf("enable vector extension: %w", err)
 	}
-	if err := s.db.AutoMigrate(&diagnosisModel{}, &messageModel{}); err != nil {
+	if err := s.db.AutoMigrate(&diagnosisModel{}, &messageModel{}, &treeNodeModel{}, &traceLinkModel{}, &treePathModel{}); err != nil {
 		return err
 	}
 	// Create HNSW index on the embedding column for cosine distance search.
@@ -203,6 +235,120 @@ func (s *PostgresStore) GetMessages(ctx context.Context, sessionID string) ([]Me
 			Content:   m.Content,
 			CreatedAt: m.CreatedAt,
 		}
+	}
+	return results, nil
+}
+
+// SaveTreeNodes persists all tree nodes for a session, replacing any existing
+// nodes first.
+func (s *PostgresStore) SaveTreeNodes(ctx context.Context, sessionID string, nodes []TreeNodeData) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("session_id = ?", sessionID).Delete(&treeNodeModel{}).Error; err != nil {
+			return err
+		}
+		models := make([]treeNodeModel, len(nodes))
+		for i, n := range nodes {
+			meta := ""
+			if len(n.Meta) > 0 {
+				b, _ := json.Marshal(n.Meta)
+				meta = string(b)
+			}
+			models[i] = treeNodeModel{
+				SessionID: sessionID,
+				NodeID:    n.NodeID,
+				Type:      n.Type,
+				Summary:   n.Summary,
+				ParentID:  n.ParentID,
+				Meta:      meta,
+				TraceID:   n.TraceID,
+				SpanID:    n.SpanID,
+				Service:   n.Service,
+				Query:     n.Query,
+			}
+		}
+		return tx.CreateInBatches(models, 100).Error
+	})
+}
+
+// SaveTraceLinks persists trace_id → session_id mappings, replacing existing
+// links for this session.
+func (s *PostgresStore) SaveTraceLinks(ctx context.Context, sessionID string, traceIDs []string) error {
+	if len(traceIDs) == 0 {
+		return nil
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("session_id = ?", sessionID).Delete(&traceLinkModel{}).Error; err != nil {
+			return err
+		}
+		models := make([]traceLinkModel, len(traceIDs))
+		for i, tid := range traceIDs {
+			models[i] = traceLinkModel{TraceID: tid, SessionID: sessionID}
+		}
+		return tx.CreateInBatches(models, 100).Error
+	})
+}
+
+// SearchByTraceID finds all diagnosis sessions that share the given trace ID,
+// excluding the current session.
+func (s *PostgresStore) SearchByTraceID(ctx context.Context, traceID, excludeSessionID string) ([]Diagnosis, error) {
+	var results []Diagnosis
+	err := s.db.WithContext(ctx).
+		Raw(`
+			SELECT d.* FROM diagnoses d
+			INNER JOIN trace_links tl ON tl.session_id = d.session_id
+			WHERE tl.trace_id = ? AND d.session_id != ?
+			ORDER BY d.created_at DESC
+			LIMIT 10
+		`, traceID, excludeSessionID).
+		Scan(&results).Error
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// SaveTreePath stores the tree path text and its embedding.
+func (s *PostgresStore) SaveTreePath(ctx context.Context, sessionID, pathText string, embedding []float32) error {
+	if len(embedding) == 0 {
+		return nil
+	}
+	record := &treePathModel{
+		SessionID: sessionID,
+		PathText:  pathText,
+		Embedding: pgvector.NewVector(embedding),
+	}
+	return s.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "session_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"path_text", "embedding"}),
+		}).
+		Create(record).Error
+}
+
+// SearchTreeByVector finds sessions with similar tree path embeddings.
+func (s *PostgresStore) SearchTreeByVector(ctx context.Context, embedding []float32, limit int) ([]Diagnosis, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	if len(embedding) == 0 {
+		return nil, nil
+	}
+	vec := pgvector.NewVector(embedding)
+	var results []Diagnosis
+	err := s.db.WithContext(ctx).
+		Raw(`
+			SELECT d.*, tp.embedding <=> ? AS distance
+			FROM diagnoses d
+			INNER JOIN tree_paths tp ON tp.session_id = d.session_id
+			ORDER BY tp.embedding <=> ?
+			LIMIT ?
+		`, vec, vec, limit).
+		Scan(&results).Error
+	if err != nil {
+		return nil, err
 	}
 	return results, nil
 }

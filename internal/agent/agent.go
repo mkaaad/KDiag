@@ -14,6 +14,8 @@ import (
 	"github.com/mkaaad/kdiag/config"
 	"github.com/mkaaad/kdiag/internal/correlation"
 	"github.com/mkaaad/kdiag/internal/memory"
+	"github.com/mkaaad/kdiag/internal/store"
+	"github.com/mkaaad/kdiag/internal/tool"
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
 )
@@ -164,6 +166,98 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 			}
 		}
 		_ = c.Store.SaveDiagnosis(ctx, sessionID, msg, answer, emb)
+
+		// Snapshot tree nodes from the agent's diagnostic session.
+		nodes := tool.SnapshotNodes()
+		tool.ClearNodes()
+
+		if len(nodes) > 0 {
+			// Build parent_id map from children relationships.
+			parentOf := make(map[string]string, len(nodes))
+			for _, n := range nodes {
+				for _, c := range n.Children {
+					parentOf[c] = n.ID
+				}
+			}
+
+			// Convert and persist tree nodes.
+			td := make([]store.TreeNodeData, 0, len(nodes))
+			var traceIDs []string
+			seenTrace := map[string]bool{}
+			for _, n := range nodes {
+				td = append(td, store.TreeNodeData{
+					NodeID:   n.ID,
+					Type:     string(n.Type),
+					Summary:  n.Summary,
+					ParentID: parentOf[n.ID],
+					Meta:     n.Meta,
+					TraceID:  n.TraceID,
+					SpanID:   n.SpanID,
+					Service:  n.Service,
+					Query:    n.Query,
+				})
+				if n.TraceID != "" && !seenTrace[n.TraceID] {
+					seenTrace[n.TraceID] = true
+					traceIDs = append(traceIDs, n.TraceID)
+				}
+			}
+			_ = c.Store.SaveTreeNodes(ctx, sessionID, td)
+
+			// Persist trace links for cross-alert correlation.
+			if len(traceIDs) > 0 {
+				_ = c.Store.SaveTraceLinks(ctx, sessionID, traceIDs)
+
+				// Search for related diagnoses sharing the same trace.
+				var sb strings.Builder
+				first := true
+				for _, tid := range traceIDs {
+					related, err := c.Store.SearchByTraceID(ctx, tid, sessionID)
+					if err != nil || len(related) == 0 {
+						continue
+					}
+					if first {
+						sb.WriteString("\n\n## 🔗 关联告警（共享 Trace ID）\n以下诊断涉及相同的 trace ID，可能与当前告警根因相同：\n\n")
+						first = false
+					}
+					for _, d := range related {
+						sb.WriteString(fmt.Sprintf("- **%s** (%s): %s\n", d.SessionID, d.CreatedAt.Format("2006-01-02 15:04"), truncate(d.Diagnosis, 120)))
+					}
+				}
+				if !first {
+					answer = answer + sb.String()
+				}
+			}
+
+			// Tree path embedding for structure similarity search.
+			if c.Embedder != nil {
+				pathText := tool.ExtractPaths(nodes)
+				if pathText != "" {
+					pathF64, err := c.Embedder.EmbedQuery(ctx, pathText)
+					if err == nil && len(pathF64) > 0 {
+						pathEmb := make([]float32, len(pathF64))
+						for i, v := range pathF64 {
+							pathEmb[i] = float32(v)
+						}
+						_ = c.Store.SaveTreePath(ctx, sessionID, pathText, pathEmb)
+
+						// Search for structurally similar past trees.
+						if similar, err := c.Store.SearchTreeByVector(ctx, pathEmb, 3); err == nil && len(similar) > 0 {
+							var sb strings.Builder
+							sb.WriteString("\n\n## 🌲 结构相似历史案例\n以下诊断的关联信息树结构与当前告警相似（基于树路径向量检索）：\n\n")
+							for _, d := range similar {
+								dist := ""
+								if d.Distance > 0 {
+									dist = fmt.Sprintf(" (距离: %.4f)", d.Distance)
+								}
+								sb.WriteString(fmt.Sprintf("- **%s** (%s)%s: %s\n", d.SessionID, d.CreatedAt.Format("2006-01-02 15:04"), dist, truncate(d.Diagnosis, 120)))
+							}
+							sb.WriteString("\n结构相似的告警可能由相同的根因模式导致，值得对比分析。\n")
+							answer = answer + sb.String()
+						}
+					}
+				}
+			}
+		}
 	}
 	return answer
 }

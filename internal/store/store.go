@@ -51,6 +51,39 @@ type Store interface {
 	// Returns up to limit results ordered by similarity ascending.
 	SearchByVector(ctx context.Context, embedding []float32, limit int) ([]Diagnosis, error)
 
+	// SaveTreeNodes persists all tree nodes for a diagnosis session.
+	// It replaces any existing nodes for the same session.
+	SaveTreeNodes(ctx context.Context, sessionID string, nodes []TreeNodeData) error
+
+	// SaveTraceLinks persists trace_id → session_id mappings for
+	// cross-alert correlation. It replaces any existing links for the session.
+	SaveTraceLinks(ctx context.Context, sessionID string, traceIDs []string) error
+
+	// SearchByTraceID finds all diagnosis sessions that share the given
+	// trace ID, excluding the current session.
+	SearchByTraceID(ctx context.Context, traceID, excludeSessionID string) ([]Diagnosis, error)
+
+	// SaveTreePath stores the tree path text and its embedding for
+	// vector-based tree structure similarity search.
+	SaveTreePath(ctx context.Context, sessionID, pathText string, embedding []float32) error
+
+	// SearchTreeByVector finds sessions with similar tree path embeddings
+	// using cosine distance. Returns up to limit results.
+	SearchTreeByVector(ctx context.Context, embedding []float32, limit int) ([]Diagnosis, error)
+
 	// Close cleans up store resources (e.g., closes the database connection).
 	Close() error
+}
+
+// TreeNodeData is a flattened representation of a tree node for persistence.
+type TreeNodeData struct {
+	NodeID   string            `json:"node_id"`
+	Type     string            `json:"type"`
+	Summary  string            `json:"summary"`
+	ParentID string            `json:"parent_id,omitempty"`
+	Meta     map[string]string `json:"meta,omitempty"`
+	TraceID  string            `json:"trace_id,omitempty"`
+	SpanID   string            `json:"span_id,omitempty"`
+	Service  string            `json:"service,omitempty"`
+	Query    string            `json:"query,omitempty"`
 }
