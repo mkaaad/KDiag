@@ -220,7 +220,7 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 						first = false
 					}
 					for _, d := range related {
-						sb.WriteString(fmt.Sprintf("- **%s** (%s): %s\n", d.SessionID, d.CreatedAt.Format("2006-01-02 15:04"), truncate(d.Diagnosis, 120)))
+						fmt.Fprintf(&sb, "- **%s** (%s): %s\n", d.SessionID, d.CreatedAt.Format("2006-01-02 15:04"), truncate(d.Diagnosis, 120))
 					}
 				}
 				if !first {
@@ -249,7 +249,7 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 								if d.Distance > 0 {
 									dist = fmt.Sprintf(" (距离: %.4f)", d.Distance)
 								}
-								sb.WriteString(fmt.Sprintf("- **%s** (%s)%s: %s\n", d.SessionID, d.CreatedAt.Format("2006-01-02 15:04"), dist, truncate(d.Diagnosis, 120)))
+								fmt.Fprintf(&sb, "- **%s** (%s)%s: %s\n", d.SessionID, d.CreatedAt.Format("2006-01-02 15:04"), dist, truncate(d.Diagnosis, 120))
 							}
 							sb.WriteString("\n结构相似的告警可能由相同的根因模式导致，值得对比分析。\n")
 							answer = answer + sb.String()

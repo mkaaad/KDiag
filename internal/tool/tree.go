@@ -2,6 +2,7 @@ package tool
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -211,13 +212,8 @@ func writePath(b *strings.Builder, byID map[string]*TreeNode, n *TreeNode) {
 	// Walk up to root.
 	parentID := ""
 	for _, other := range byID {
-		for _, c := range other.Children {
-			if c == n.ID {
-				parentID = other.ID
-				break
-			}
-		}
-		if parentID != "" {
+		if slices.Contains(other.Children, n.ID) {
+			parentID = other.ID
 			break
 		}
 	}
