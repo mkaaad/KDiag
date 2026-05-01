@@ -39,6 +39,7 @@ func NewHandlerFunc(ctx context.Context, c *config.Config) http.HandlerFunc {
 	if err != nil {
 		//TODO
 	}
+	client.NewExpandTools(c)
 	err = client.NewPostgresStore(ctx, c)
 	if err != nil {
 		//TODO
@@ -89,6 +90,7 @@ func PollAlerts(ctx context.Context, c *config.Config) {
 	if err != nil {
 		//TODO
 	}
+	client.NewExpandTools(c)
 	err = client.NewPostgresStore(ctx, c)
 	if err != nil {
 		//TODO

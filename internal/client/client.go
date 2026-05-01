@@ -106,7 +106,17 @@ func NewLokiClient(c *config.Config) error {
 	return nil
 }
 
-// NewPostgresStore creates a PostgreSQL store and assigns it to c.Store.
+// NewExpandTools creates the ExpandNode and AddNode tools and registers them
+// with the config. These tools let the agent lazily expand nodes in the
+// correlation information tree and attach new findings back into the tree.
+// Jaeger and Loki addresses are optional; if empty, the ExpandNode tool will
+// report that the relevant backend is not configured.
+func NewExpandTools(c *config.Config) {
+	expandTool := tool.NewExpandNodeTool(c.JaegerAddress, c.LokiAddress)
+	c.Tools = append(c.Tools, expandTool)
+	addNodeTool := tool.NewAddNodeTool()
+	c.Tools = append(c.Tools, addNodeTool)
+}
 // If the config's PostgresConfig has an empty Host, it skips initialization
 // and returns nil.
 func NewPostgresStore(ctx context.Context, c *config.Config) error {
