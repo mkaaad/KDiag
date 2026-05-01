@@ -214,7 +214,7 @@ func queryLokiLogs(ctx context.Context, addr string, tr *timeRange) string {
 	}
 	var logResp struct {
 		Data struct {
-			Result []interface{} `json:"result"`
+			Result []any `json:"result"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(data, &logResp); err != nil {

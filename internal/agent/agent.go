@@ -115,7 +115,7 @@ func Diag(ctx context.Context, c *config.Config, msg string) string {
 				var sb strings.Builder
 				sb.WriteString("\n\n## 📋 相似历史案例\n以下是与当前告警指纹相似的历史诊断记录：\n\n")
 				for _, d := range similar {
-					sb.WriteString(fmt.Sprintf("- **%s** (%s): %s\n", d.AlertName, d.CreatedAt.Format("2006-01-02 15:04"), truncate(d.Diagnosis, 120)))
+					fmt.Fprintf(&sb, "- **%s** (%s): %s\n", d.AlertName, d.CreatedAt.Format("2006-01-02 15:04"), truncate(d.Diagnosis, 120))
 				}
 				sb.WriteString("\n参考历史案例有助于更快定位根因。\n")
 				msg = msg + sb.String()
